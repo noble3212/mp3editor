@@ -1,1 +1,1 @@
-https://github.com/noble3212/mp3editor
+https://noble3212.github.io/mp3editor/
