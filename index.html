@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MP3 Multi-Clip Editor & Combiner</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 10px;
+      background: #f9f9f9;
+    }
+    h1 {
+      text-align: center;
+    }
+    #clipList {
+      margin-top: 20px;
+    }
+    .clip {
+      background: white;
+      border: 1px solid #ddd;
+      margin-bottom: 15px;
+      padding: 10px;
+      border-radius: 6px;
+    }
+    .clip-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 8px;
+    }
+    label {
+      font-size: 14px;
+      display: flex;
+      flex-direction: column;
+      min-width: 120px;
+    }
+    input[type="number"] {
+      width: 80px;
+      padding: 4px;
+    }
+    button.trim-btn {
+      background-color: #007bff;
+      border: none;
+      color: white;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button.trim-btn:hover {
+      background-color: #0056b3;
+    }
+    #combinedPlayer {
+      margin-top: 30px;
+      width: 100%;
+    }
+    #exportButton {
+      margin-top: 20px;
+      font-size: 16px;
+      padding: 10px 18px;
+      border: none;
+      background-color: #28a745;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #exportButton:hover {
+      background-color: #1e7e34;
+    }
+    .clip-header {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .duration {
+      font-style: italic;
+      font-size: 13px;
+      color: #555;
+    }
+    #status {
+      margin-top: 15px;
+      font-size: 14px;
+      color: #333;
+      min-height: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>MP3 Multi-Clip Editor & Combiner</h1>
+  <input type="file" id="fileInput" accept="audio/mp3,audio/*" multiple />
+  <div id="clipList"></div>
+
+  <button id="exportButton">Combine & Export WAV</button>
+  <div id="status"></div>
+  <audio id="combinedPlayer" controls></audio>
+
+  <script>
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const fileInput = document.getElementById('fileInput');
+    const clipList = document.getElementById('clipList');
+    const exportButton = document.getElementById('exportButton');
+    const combinedPlayer = document.getElementById('combinedPlayer');
+    const status = document.getElementById('status');
+
+    const clips = [];
+    let playSource = null;
+
+    // Resume AudioContext on first user interaction (required by many browsers)
+    function resumeAudioContext() {
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+      window.removeEventListener('click', resumeAudioContext);
+      window.removeEventListener('keydown', resumeAudioContext);
+    }
+    window.addEventListener('click', resumeAudioContext);
+    window.addEventListener('keydown', resumeAudioContext);
+
+    fileInput.addEventListener('change', async (e) => {
+      const files = e.target.files;
+      if (!files.length) return;
+      status.textContent = `Loading ${files.length} file(s)...`;
+      for (const file of files) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          addClip(file.name, audioBuffer);
+          status.textContent = `Loaded: ${file.name}`;
+        } catch (err) {
+          alert(`Error loading ${file.name}: ${err.message}`);
+          status.textContent = `Error loading ${file.name}`;
+        }
+      }
+      status.textContent = `Loaded ${clips.length} clip(s).`;
+      fileInput.value = '';
+    });
+
+    function addClip(name, audioBuffer) {
+      clips.push({
+        name,
+        buffer: audioBuffer,
+        trimStart: 0,
+        trimEnd: audioBuffer.duration,
+      });
+      renderClips();
+    }
+
+    function renderClips() {
+      clipList.innerHTML = '';
+      clips.forEach((clip, index) => {
+        const clipDiv = document.createElement('div');
+        clipDiv.className = 'clip';
+
+        clipDiv.innerHTML = `
+          <div class="clip-header">${clip.name} <span class="duration">(Duration: ${clip.buffer.duration.toFixed(2)}s)</span></div>
+          <div class="clip-controls">
+            <label>
+              Start Time (s):
+              <input type="number" min="0" max="${clip.buffer.duration.toFixed(2)}" step="0.01" value="${clip.trimStart.toFixed(2)}" data-index="${index}" data-type="start" />
+            </label>
+            <label>
+              End Time (s):
+              <input type="number" min="0" max="${clip.buffer.duration.toFixed(2)}" step="0.01" value="${clip.trimEnd.toFixed(2)}" data-index="${index}" data-type="end" />
+            </label>
+            <button class="trim-btn" data-index="${index}">Play Trimmed</button>
+          </div>
+        `;
+
+        clipList.appendChild(clipDiv);
+      });
+
+      // Inputs event listeners
+      clipList.querySelectorAll('input[type="number"]').forEach(input => {
+        input.addEventListener('change', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          const type = e.target.dataset.type;
+          let val = parseFloat(e.target.value);
+
+          if (isNaN(val)) val = 0;
+
+          val = Math.min(val, clips[idx].buffer.duration);
+          val = Math.max(val, 0);
+
+          if (type === 'start') {
+            if (val >= clips[idx].trimEnd) {
+              val = clips[idx].trimEnd - 0.01;
+            }
+            clips[idx].trimStart = val;
+          } else if (type === 'end') {
+            if (val <= clips[idx].trimStart) {
+              val = clips[idx].trimStart + 0.01;
+            }
+            clips[idx].trimEnd = val;
+          }
+          e.target.value = val.toFixed(2);
+        });
+      });
+
+      // Play button event listeners
+      clipList.querySelectorAll('button.trim-btn').forEach(button => {
+        button.addEventListener('click', () => {
+          const idx = parseInt(button.dataset.index);
+          playTrimmedClip(clips[idx]);
+        });
+      });
+    }
+
+    function playTrimmedClip(clip) {
+      if (playSource) {
+        try {
+          playSource.stop();
+        } catch {}
+        playSource.disconnect();
+        playSource = null;
+      }
+
+      const { buffer, trimStart, trimEnd } = clip;
+      if (trimEnd <= trimStart) {
+        alert('Invalid trim range');
+        return;
+      }
+
+      const trimmedBuffer = sliceAudioBuffer(buffer, trimStart, trimEnd);
+
+      playSource = audioContext.createBufferSource();
+      playSource.buffer = trimmedBuffer;
+      playSource.connect(audioContext.destination);
+      playSource.start();
+
+      playSource.onended = () => {
+        playSource.disconnect();
+        playSource = null;
+      };
+    }
+
+    function sliceAudioBuffer(buffer, start, end) {
+      const sampleRate = buffer.sampleRate;
+      const numChannels = buffer.numberOfChannels;
+
+      const startSample = Math.floor(start * sampleRate);
+      const endSample = Math.floor(end * sampleRate);
+      const frameCount = endSample - startSample;
+
+      const newBuffer = audioContext.createBuffer(numChannels, frameCount, sampleRate);
+
+      for (let channel = 0; channel < numChannels; channel++) {
+        const oldData = buffer.getChannelData(channel);
+        const newData = newBuffer.getChannelData(channel);
+        for (let i = 0; i < frameCount; i++) {
+          newData[i] = oldData[startSample + i];
+        }
+      }
+
+      return newBuffer;
+    }
+
+    exportButton.addEventListener('click', () => {
+      if (clips.length === 0) {
+        alert('Add at least one audio clip first.');
+        return;
+      }
+      status.textContent = 'Combining clips...';
+
+      const sampleRate = audioContext.sampleRate;
+      const numChannels = 2; // output stereo
+
+      const totalLengthSamples = clips.reduce((sum, clip) => {
+        return sum + Math.floor((clip.trimEnd - clip.trimStart) * sampleRate);
+      }, 0);
+
+      const combinedBuffer = audioContext.createBuffer(numChannels, totalLengthSamples, sampleRate);
+
+      let offset = 0;
+      clips.forEach(clip => {
+        const trimmedBuffer = sliceAudioBuffer(clip.buffer, clip.trimStart, clip.trimEnd);
+
+        for (let channel = 0; channel < numChannels; channel++) {
+          const combinedData = combinedBuffer.getChannelData(channel);
+          // If original clip has fewer channels, use channel 0 for missing channels
+          const trimmedData = trimmedBuffer.getChannelData(Math.min(channel, trimmedBuffer.numberOfChannels - 1));
+          combinedData.set(trimmedData, offset);
+        }
+        offset += trimmedBuffer.length;
+      });
+
+      const wavBlob = bufferToWav(combinedBuffer);
+      const url = URL.createObjectURL(wavBlob);
+      combinedPlayer.src = url;
+      combinedPlayer.style.display = 'block';
+
+      // Auto-download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'combined-trimmed-audio.wav';
+      a.click();
+
+      status.textContent = 'Combination complete! Download started.';
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        status.textContent = '';
+      }, 6000);
+    });
+
+    // WAV export helpers
+
+    function bufferToWav(buffer) {
+      const numChannels = buffer.numberOfChannels;
+      const sampleRate = buffer.sampleRate;
+      const format = 1; // PCM
+      const bitDepth = 16;
+
+      let samples;
+      if (numChannels === 2) {
+        const left = buffer.getChannelData(0);
+        const right = buffer.getChannelData(1);
+        samples = interleave(left, right);
+      } else {
+        samples = buffer.getChannelData(0);
+      }
+
+      const bufferLength = samples.length * 2 + 44;
+      const arrayBuffer = new ArrayBuffer(bufferLength);
+      const view = new DataView(arrayBuffer);
+
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, format, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * numChannels * bitDepth / 8, true);
+      view.setUint16(32, numChannels * bitDepth / 8, true);
+      view.setUint16(34, bitDepth, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, samples.length * 2, true);
+
+      floatTo16BitPCM(view, 44, samples);
+
+      return new Blob([view], { type: 'audio/wav' });
+    }
+
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+
+    function floatTo16BitPCM(output, offset, input) {
+      for (let i = 0; i < input.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, input[i]));
+        s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        output.setInt16(offset, s, true);
+      }
+    }
+
+    function interleave(inputL, inputR) {
+      const length = inputL.length + inputR.length;
+      const result = new Float32Array(length);
+
+      let index = 0,
+        inputIndex = 0;
+
+      while (index < length) {
+        result[index++] = inputL[inputIndex];
+        result[index++] = inputR[inputIndex];
+        inputIndex++;
+      }
+      return result;
+    }
+  </script>
+</body>
+</html>
